@@ -17,7 +17,7 @@ DOWNLOAD_SITE=${HOME}/epics/downloads
 JDK_install_site=/opt
 JDK_filename="jdk-8u111-linux-x64.tar.gz"
 JAVA_VERSION="1.8.0_111"
-TOMCAT_VERSION="7.0.73"
+TOMCAT_VERSION="7.0.75"
 MYSQL_USER="archappl"
 MYSQL_USER_PW="archappl"
 MYSQL_DB="archappl"
@@ -31,7 +31,7 @@ EPICS_VERSION="3.14.12.5"
 EPICS_PATH=${HOME}/epics/R${EPICS_VERSION}
 EPICS_BASE=${EPICS_PATH}/base
 CS_STUDIO_VERSION="4.3.2"
-java_home=$(readlink -f /usr/bin/java | sed 's/\/bin\/java//g')
+java_home=$(readlink -f /usr/bin/jar | sed 's/\/bin\/jar//g')
 EPICS_V4_VERSION="4.6.0"
 
 function ini_func() { sleep 1; printf "\n>>>> You are entering in  : %s\n" "${1}"; }
@@ -64,7 +64,7 @@ if (( ( $? != 0 ) ))
 	export JAVA_HOME=/opt/jdk${JAVA_VERSION}
 else
 	echo "JDK8 is already installed. Skip to the next step"
-	export JAVA_HOME=${java_home}
+        export JAVA_HOME=${java_home}
 fi
 
     end_func ${func_name};
@@ -141,22 +141,24 @@ function mysql_setup(){
     case "$CENT" in
       centos)
             printf "Setup mariadb-server... \n"
+	    $SUDO_CMD yum -y install java-1.8.0-openjdk-devel
 	    $SUDO_CMD yum -y install mariadb-server
 	    $SUDO_CMD systemctl enable mariadb.service
-	    $SUDO_CMD start mariadb.service
-
+	    $SUDO_CMD systemctl start mariadb.service
+	    echo ""
+	    echo "Enter the mariadb root password"
 	    echo "create user ${MYSQL_USER}@localhost identified by '${MYSQL_USER_PW}';create database if not exists ${MYSQL_DB};grant all on ${MYSQL_DB}.* to ${MYSQL_USER}@localhost;" | mysql -u "root" -p"${MYSQL_ROOT_PW}"
     	    echo "use ${MYSQL_DB};" | mysql -u"${MYSQL_USER}" -p"${MYSQL_USER_PW}"
             ;;
       *)
             printf "Setup mysql-server... \n"
             $SUDO_CMD apt-get -y install mysql-server
-
+	    echo ""
+	    echo "Enter the mysql root password"
     	    echo "create user ${MYSQL_USER}@localhost identified by '${MYSQL_USER_PW}';create database if not exists ${MYSQL_DB};grant all on ${MYSQL_DB}.* to ${MYSQL_USER}@localhost;" | mysql -u "root" -p"${MYSQL_ROOT_PW}"
     	    echo "use ${MYSQL_DB};" | mysql -u"${MYSQL_USER}" -p"${MYSQL_USER_PW}"
             ;;
     esac
-    exit
     end_func ${func_name};
 }
 
@@ -637,7 +639,7 @@ echo "1 : EPICS Base version R${EPICS_VERSION}"
 echo "2 : EPICS synApps"
 echo "3 : EPICS 4 version ${EPICS_V4_VERSION}"
 echo "4 : RAON Control System Studio version ${CS_STUDIO_VERSION}"
-echo "5 : Archiver Appliance(Only Debian)"
+echo "5 : Archiver Appliance"
 echo "0 : Exit script"
 echo ""
 echo -n "Enter the number : "
