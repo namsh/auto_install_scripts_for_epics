@@ -1,0 +1,693 @@
+#!/bin/bash
+# Shell	 : install_script
+# Author : Seung Hee Nam
+# email  : namsh@ibs.re.kr / beyourangel@icloud.com
+# Date	 : Tuesday 03 January 2017 16:26 KST
+# version: 0.1.3
+#
+# Do not modify and distribute without permission of the author.
+# Please contact me if you have any questions.
+# This script using sudo package so, you have to install sudo package.
+#
+LOG_DATE=$(date +"%Y.%m.%d.%H:%M")
+SUDO_CMD="sudo"
+TAR_CMD="tar xzf"
+WGET_CMD="wget -c"
+DOWNLOAD_SITE=${HOME}/epics/downloads
+JDK_install_site=/opt
+JDK_filename="jdk-8u111-linux-x64.tar.gz"
+JAVA_VERSION="1.8.0_111"
+TOMCAT_VERSION="7.0.73"
+MYSQL_USER="archappl"
+MYSQL_USER_PW="archappl"
+MYSQL_DB="archappl"
+MYSQL_ROOT_PW=""
+ARCHAPPL_filename="archappl_v0.0.1_SNAPSHOT_26-January-2016T18-03-47.tar.gz"
+AA_HOST_IP=$(hostname -I | awk '{print $1}')
+WARSRC_DIR=${DOWNLOAD_SITE}/archappl
+SITE_SPECIFIC=$(pwd)/site_specific_content
+EPICS_HOST_ARCH=linux-x86_64
+EPICS_VERSION="3.14.12.5"
+EPICS_PATH=${HOME}/epics/R${EPICS_VERSION}
+EPICS_BASE=${EPICS_PATH}/base
+CS_STUDIO_VERSION="4.3.2"
+java_home=$(readlink -f /usr/bin/java | sed 's/\/bin\/java//g')
+EPICS_V4_VERSION="4.6.0"
+
+function ini_func() { sleep 1; printf "\n>>>> You are entering in  : %s\n" "${1}"; }
+function end_func() { sleep 1; printf "\n<<<< You are leaving from : %s\n" "${1}"; }
+
+
+# Sun Java JDK 1.8
+# Definitely the 64 bit version for production systems. We need the JDK, not the JRE
+function jdk8_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+java -version 2>&1 | grep 'version "1.8'
+if (( ( $? != 0 ) ))
+	then
+	echo "Cannot find the string 1.8 in java -version. Installation JDK8..."
+
+	cd ${DOWNLOAD_SITE}
+
+	printf "Downloading the JDK8...\n"
+	$WGET_CMD --no-cookies --no-check-certificate --header "Cookie:oraclelicense=accept-securebckup-cookie" "http://download.oracle.com/otn-pub/java/jdk/8u111-b14/${JDK_filename}"
+
+	printf "Unzip the JDK8 into /opt...\n"
+	$SUDO_CMD $TAR_CMD ${JDK_filename} -C ${JDK_install_site}
+
+	$SUDO_CMD update-alternatives --install /usr/bin/java java /opt/jdk${JAVA_VERSION}/bin/java 1041
+	$SUDO_CMD update-alternatives --install /usr/bin/javac javac /opt/jdk${JAVA_VERSION}/bin/javac 1041
+	$SUDO_CMD update-alternatives --install /usr/bin/jar jar /opt/jdk${JAVA_VERSION}/bin/jar 1041
+	$SUDO_CMD update-alternatives --set java /opt/jdk${JAVA_VERSION}/bin/java
+
+	export JAVA_HOME=/opt/jdk${JAVA_VERSION}
+else
+	echo "JDK8 is already installed. Skip to the next step"
+	export JAVA_HOME=${java_home}
+fi
+
+    end_func ${func_name};
+}
+
+
+# A recent version of Tomcat 7.x
+# Preferably apache-tomcat-7.x
+function tomcat_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+
+    cd ${DOWNLOAD_SITE}
+
+    printf "Downloading the Tomcat7... \n"
+    $WGET_CMD "http://apache.mirror.cdnetworks.com/tomcat/tomcat-7/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz"
+
+    printf "Unzip the tomcat into ${EPICS_PATH}/arhciver_applinace... \n"
+    $TAR_CMD apache-tomcat-${TOMCAT_VERSION}.tar.gz -C ${EPICS_PATH}/archiver_appliance
+
+    export TOMCAT_HOME=${EPICS_PATH}/archiver_appliance/apache-tomcat-${TOMCAT_VERSION}
+
+cat > ${TOMCAT_HOME}/lib/log4j.properties <<EOF
+# Set root logger level and its only appender to A1.
+log4j.rootLogger=ERROR, A1
+log4j.logger.config.org.epics.archiverappliance=INFO
+log4j.logger.org.apache.http=ERROR
+
+
+# A1 is set to be a DailyRollingFileAppender
+log4j.appender.A1=org.apache.log4j.DailyRollingFileAppender
+log4j.appender.A1.File=arch.log
+log4j.appender.A1.DatePattern='.'yyyy-MM-dd
+
+
+# A1 uses PatternLayout.
+log4j.appender.A1.layout=org.apache.log4j.PatternLayout
+log4j.appender.A1.layout.ConversionPattern=%-4r [%t] %-5p %c %x - %m%n
+EOF
+
+# Build the Apache Commons Daemon that ships with Tomcat
+pushd ${TOMCAT_HOME}/bin
+tar zxf commons-daemon-native.tar.gz
+COMMONS_DAEMON_VERSION_FOLDER=`ls -d commons-daemon-*-native-src | head -1`
+popd
+
+pushd ${TOMCAT_HOME}/bin/commons-daemon-1.0.15-native-src/unix
+./configure
+make
+
+    cp ${TOMCAT_HOME}/bin/commons-daemon-1.0.15-native-src/unix/jsvc ${TOMCAT_HOME}/bin
+
+
+    end_func ${func_name};
+}
+
+
+# A recent version of MySQL
+# If persisting configuration to a database
+function mysql_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+
+    cd ${DOWNLOAD_SITE}
+
+    printf "Downloading mysql-connector... \n"
+    $WGET_CMD "http://dev.mysql.com/get/Downloads/Connector-J/mysql-connector-java-5.1.40.tar.gz"
+    $TAR_CMD mysql-connector-java-5.1.40.tar.gz
+
+    cd ${DOWNLOAD_SITE}/mysql-connector-java-5.1.40
+    cp ${DOWNLOAD_SITE}/mysql-connector-java-5.1.40/mysql-connector-java-5.1.40-bin.jar ${TOMCAT_HOME}/lib
+
+    CENT=$(uname -r | grep el | sed '1s/.*/centos/')
+    case "$CENT" in
+      centos)
+            printf "Setup mariadb-server... \n"
+	    $SUDO_CMD yum -y install mariadb-server
+	    $SUDO_CMD systemctl enable mariadb.service
+	    $SUDO_CMD start mariadb.service
+
+	    echo "create user ${MYSQL_USER}@localhost identified by '${MYSQL_USER_PW}';create database if not exists ${MYSQL_DB};grant all on ${MYSQL_DB}.* to ${MYSQL_USER}@localhost;" | mysql -u "root" -p"${MYSQL_ROOT_PW}"
+    	    echo "use ${MYSQL_DB};" | mysql -u"${MYSQL_USER}" -p"${MYSQL_USER_PW}"
+            ;;
+      *)
+            printf "Setup mysql-server... \n"
+            $SUDO_CMD apt-get -y install mysql-server
+
+    	    echo "create user ${MYSQL_USER}@localhost identified by '${MYSQL_USER_PW}';create database if not exists ${MYSQL_DB};grant all on ${MYSQL_DB}.* to ${MYSQL_USER}@localhost;" | mysql -u "root" -p"${MYSQL_ROOT_PW}"
+    	    echo "use ${MYSQL_DB};" | mysql -u"${MYSQL_USER}" -p"${MYSQL_USER_PW}"
+            ;;
+    esac
+    exit
+    end_func ${func_name};
+}
+
+# Downloading archiver appliance and unzip
+function archappl_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+
+    cd ${DOWNLOAD_SITE}
+
+    mkdir -p ${DOWNLOAD_SITE}/archappl
+
+    printf "Downloading archiver appliance... \n"
+    $WGET_CMD "https://github.com/slacmshankar/epicsarchiverap/releases/download/v0.0.1_SNAPSHOT_26-January-2016/${ARCHAPPL_filename}"
+
+    printf "Unzip ${ARCHAPPL_filename} into ${DOWNLOAD_SITE}/archappl directory... \n"
+    $TAR_CMD ${ARCHAPPL_filename} -C ${DOWNLOAD_SITE}/archappl
+
+
+
+# Create an appliances.xml file and set up this appliance's identity.
+cat > ${EPICS_PATH}/archiver_appliance/appliances.xml <<EOF
+ <appliances>
+   <appliance>
+     <identity>appliance0</identity>
+     <cluster_inetport>${AA_HOST_IP}:16670</cluster_inetport>
+     <mgmt_url>http://${AA_HOST_IP}:17665/mgmt/bpl</mgmt_url>
+     <engine_url>http://${AA_HOST_IP}:17666/engine/bpl</engine_url>
+     <etl_url>http://${AA_HOST_IP}:17667/etl/bpl</etl_url>
+     <retrieval_url>http://${AA_HOST_IP}:17668/retrieval/bpl</retrieval_url>
+     <data_retrieval_url>http://${AA_HOST_IP}:17668/retrieval</data_retrieval_url>
+   </appliance>
+ </appliances>
+EOF
+
+export ARCHAPPL_APPLIANCES=${EPICS_PATH}/archiver_appliance/appliances.xml
+export ARCHAPPL_MYIDENTITY=appliance0
+
+# Deploy multiple tomcats
+python ${DOWNLOAD_SITE}/archappl/install_scripts/deployMultipleTomcats.py ${EPICS_PATH}/archiver_appliance
+
+# Set the DB table into mysql DB
+mysql --user=${MYSQL_USER} --password=${MYSQL_USER_PW} --database=${MYSQL_DB} < ${DOWNLOAD_SITE}/archappl/install_scripts/archappl_mysql.sql
+
+# Put context.xml
+cat > ${EPICS_PATH}/archiver_appliance/mgmt/conf/context.xml <<EOF
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!-- The contents of this file will be loaded for each web application -->
+<Context>
+
+    <!-- Default set of monitored resources -->
+    <WatchedResource>WEB-INF/web.xml</WatchedResource>
+
+    <!-- Uncomment this to disable session persistence across Tomcat restarts -->
+    <!--
+    <Manager pathname="" />
+    -->
+
+    <!-- Uncomment this to enable Comet connection tacking (provides events
+         on session expiration as well as webapp lifecycle) -->
+    <!--
+    <Valve className="org.apache.catalina.valves.CometConnectionManagerValve" />
+    -->
+    <Resource name="jdbc/archappl"
+         auth="Container"
+         type="javax.sql.DataSource"
+         factory="org.apache.tomcat.jdbc.pool.DataSourceFactory"
+         testWhileIdle="true"
+         testOnBorrow="true"
+         testOnReturn="false"
+         validationQuery="SELECT 1"
+         validationInterval="30000"
+         timeBetweenEvictionRunsMillis="30000"
+         maxActive="10"
+         minIdle="2"
+         maxWait="10000"
+         initialSize="2"
+         removeAbandonedTimeout="60"
+         removeAbandoned="true"
+         logAbandoned="true"
+         minEvictableIdleTimeMillis="30000"
+         jmxEnabled="true"
+         driverClassName="com.mysql.jdbc.Driver"
+         url="jdbc:mysql://localhost:3306/${MYSQL_DB}"
+         username="${MYSQL_USER}"
+         password="${MYSQL_USER_PW}"
+     />
+</Context>
+EOF
+export TOMCAT_HOME=${EPICS_PATH}/archiver_appliance/apache-tomcat-${TOMCAT_VERSION}
+
+cd ${EPICS_PATH}/archiver_appliance/mgmt/conf
+cp context.xml ${TOMCAT_HOME}/conf
+    end_func ${func_name};
+}
+
+# Deploys a new build onto the EPICS archiver appliance installation
+function deploy(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+
+    printf "Deploy war release...\n"
+    pushd ${EPICS_PATH}/archiver_appliance/mgmt/webapps && rm -rf mgmt*; cp ${WARSRC_DIR}/mgmt.war .; mkdir mgmt; cd mgmt; jar xf ../mgmt.war; popd; 
+    pushd ${EPICS_PATH}/archiver_appliance/engine/webapps && rm -rf engine*; cp ${WARSRC_DIR}/engine.war .; mkdir engine; cd engine; jar xf ../engine.war; popd; 
+    pushd ${EPICS_PATH}/archiver_appliance/etl/webapps && rm -rf etl*; cp ${WARSRC_DIR}/etl.war .; mkdir etl; cd etl; jar xf ../etl.war; popd; 
+    pushd ${EPICS_PATH}/archiver_appliance/retrieval/webapps && rm -rf retrieval*; cp ${WARSRC_DIR}/retrieval.war .; mkdir retrieval; cd retrieval; jar xf ../retrieval.war; popd
+
+    end_func ${func_name};
+}
+
+# Change template for specific site
+function change_template(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+    printf "Change template for the site...\n"
+    java -cp ${EPICS_PATH}/archiver_appliance/mgmt/webapps/mgmt/WEB-INF/classes org.epics.archiverappliance.mgmt.bpl.SyncStaticContentHeadersFooters ${SITE_SPECIFIC}/template_changes.html ${EPICS_PATH}/archiver_appliance/mgmt/webapps/mgmt/ui
+    printf "Change img for the site... \n"
+    cp -R ${SITE_SPECIFIC}/img/* ${EPICS_PATH}/archiver_appliance/mgmt/webapps/mgmt/ui/comm/img/
+
+    end_func ${func_name};
+}
+
+
+# Prepare archiver appliance storage directory
+function prepare_storage(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+
+    printf "Make STS/MTS/LTS directory...\n"
+    mkdir -p ${EPICS_PATH}/archiver_appliance/storage
+    mkdir -p ${EPICS_PATH}/archiver_appliance/storage/{STS,MTS,LTS}
+
+    end_func ${func_name};
+}
+
+
+# Create archiver appliance start script
+function start_script(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+
+    echo "Create Archiver Appliance start script..."
+
+cat > ${EPICS_PATH}/archiver_appliance/single_node_archappl.sh <<EOF
+#!/bin/bash
+# startup script for the RAON archiver appliance
+
+source ${EPICS_PATH}/setEpicsEnv.sh
+
+export JAVA_HOME=${java_home}
+export PATH=${JAVA_HOME}/bin:${PATH}
+# We use a lot of memory; so be generous with the heap.
+export JAVA_OPTS="-XX:MaxPermSize=128M -XX:+UseG1GC -Xmx4G -Xms4G -ea"
+
+# Set up Tomcat home
+export TOMCAT_HOME=${EPICS_PATH}/archiver_appliance/apache-tomcat-${TOMCAT_VERSION}
+
+# Set up the root folder of the individual Tomcat instances.
+export ARCHAPPL_DEPLOY_DIR=${EPICS_PATH}/archiver_appliance
+
+# Set appliance.xml and the identity of this appliance
+export ARCHAPPL_APPLIANCES=${EPICS_PATH}/archiver_appliance/appliances.xml
+export ARCHAPPL_MYIDENTITY="appliance0"
+
+# If you have your own policies file, please change this line.
+# export ARCHAPPL_POLICIES=/nfs/epics/archiver/production_policies.py
+
+# Set the location of short term and long term stores; this is necessary only if your policy demands it
+export ARCHAPPL_SHORT_TERM_FOLDER=${EPICS_PATH}/archiver_appliance/storage/STS
+export ARCHAPPL_MEDIUM_TERM_FOLDER=${EPICS_PATH}/archiver_appliance/storage/MTS
+export ARCHAPPL_LONG_TERM_FOLDER=${EPICS_PATH}/archiver_appliance/storage/LTS
+
+# Enable core dumps in case the JVM fails
+ulimit -c unlimited
+
+function startTomcatAtLocation() {
+    export CATALINA_HOME=\$TOMCAT_HOME
+    export CATALINA_BASE=\$1
+    echo "Starting tomcat at location \${CATALINA_BASE}"
+
+    export LD_LIBRARY_PATH=\${CATALINA_BASE}/webapps/engine/WEB-INF/lib/native/linux-x86_64:\${LD_LIBRARY_PATH}
+
+    pushd \${CATALINA_BASE}/logs
+    \${CATALINA_HOME}/bin/jsvc \\
+        -server \\
+        -cp \${CATALINA_HOME}/bin/bootstrap.jar:\${CATALINA_HOME}/bin/tomcat-juli.jar \\
+        \${JAVA_OPTS} \\
+        -Dcatalina.base=\${CATALINA_BASE} \\
+        -Dcatalina.home=\${CATALINA_HOME} \\
+        -cwd \${CATALINA_BASE}/logs \\
+        -outfile \${CATALINA_BASE}/logs/catalina.out \\
+        -errfile \${CATALINA_BASE}/logs/catalina.err \\
+        -pidfile \${CATALINA_BASE}/pid \\
+        org.apache.catalina.startup.Bootstrap start
+     popd
+}
+
+function stopTomcatAtLocation() {
+
+    export CATALINA_HOME=\$TOMCAT_HOME
+    export CATALINA_BASE=\$1
+    echo "Stopping tomcat at location \${CATALINA_BASE}"
+    pushd \${CATALINA_BASE}/logs
+    \${CATALINA_HOME}/bin/jsvc \\
+        -server \\
+        -cp \${CATALINA_HOME}/bin/bootstrap.jar:\${CATALINA_HOME}/bin/tomcat-juli.jar \\
+        \${JAVA_OPTS} \\
+        -Dcatalina.base=\${CATALINA_BASE} \\
+        -Dcatalina.home=\${CATALINA_HOME} \\
+        -cwd \${CATALINA_BASE}/logs \\
+        -outfile \${CATALINA_BASE}/logs/catalina.out \\
+        -errfile \${CATALINA_BASE}/logs/catalina.err \\
+        -pidfile \${CATALINA_BASE}/pid \\
+        -stop \\
+        org.apache.catalina.startup.Bootstrap
+     popd
+}
+
+function stop() { 
+        stopTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/engine
+        stopTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/retrieval
+        stopTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/etl
+        stopTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/mgmt
+}
+
+function start() { 
+        startTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/mgmt
+        startTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/engine
+        startTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/etl
+        startTomcatAtLocation \${ARCHAPPL_DEPLOY_DIR}/retrieval
+}
+
+
+# See how we were called.
+case "\$1" in
+  start)
+        start
+        ;;
+  stop)
+        stop
+        ;;
+  restart)
+        stop
+        start
+        ;;
+  *)
+        echo $"Usage: $0 {start|stop|restart}"
+        exit 2
+esac
+EOF
+
+cd ${EPICS_PATH}/archiver_appliance
+chmod +x single_node_archappl.sh
+
+    end_func ${func_name};
+}
+
+
+function epics_base_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+if [ -d ${EPICS_PATH}/base ]; then
+        echo ""
+        echo "EPICS base already exist"
+        echo "Do you want to change with EPICS base version ${EPICS_VERSION}?"
+        echo "Y / N : "
+        read csanswer
+        if [ "$csanswer" == "Y" ] || [ "$csanswer" == "y" ]; then
+                echo ""
+                echo "Change old EPICS base to EPICS baseR${EPICS_VERSION}"
+                echo "Old base directory is change with base_bak_${LOG_DATE}"
+		cd ${EPICS_PATH}
+                mv base base_bak_${LOG_DATE}
+		$SUDO_CMD apt-get -y install build-essential
+		$SUDO_CMD apt-get -y install libreadline-dev
+		$SUDO_CMD yum -y install readline-devel
+		$SUDO_CMD yum -y install perl-devel
+		$SUDO_CMD yum -y install perl-Pod-Checker.noarch
+    		cd ${HOME}/epics/downloads
+                echo "EPICS baseR${EPICS_VERSION} downloading..."
+                $WGET_CMD "https://www.aps.anl.gov/epics/download/base/baseR${EPICS_VERSION}.tar.gz"
+		$TAR_CMD baseR${EPICS_VERSION}.tar.gz  --transform 's/base-'${EPICS_VERSION}'/base/' -C ${EPICS_PATH}
+		cd ${EPICS_PATH}/base
+    		make
+                echo "EPICS base installed at ${EPICS_PATH}/base"
+        else
+                echo ""
+                echo "Please re-run this script when you want to change EPICS baseR${EPICS_VERSION}"
+                echo ""
+        fi
+else
+        mkdir -p ${HOME}/epics/{downloads,R${EPICS_VERSION}}
+	$SUDO_CMD apt-get -y install build-essential
+        $SUDO_CMD apt-get -y install libreadline-dev
+	$SUDO_CMD yum -y install readline-devel
+        $SUDO_CMD yum -y install perl-devel
+        $SUDO_CMD yum -y install perl-Pod-Checker.noarch
+        cd ${HOME}/epics/downloads
+        echo "EPICS baseR${EPICS_VERSION} downloading..."
+        $WGET_CMD "https://www.aps.anl.gov/epics/download/base/baseR${EPICS_VERSION}.tar.gz"
+        $TAR_CMD baseR${EPICS_VERSION}.tar.gz  --transform 's/base-'${EPICS_VERSION}'/base/' -C ${EPICS_PATH}
+        cd ${EPICS_PATH}/base
+        make
+        echo "EPICS base installed at ${EPICS_PATH}/base"
+fi
+
+cat > ${EPICS_PATH}/setEpicsEnv.sh <<EOF
+export EPICS_HOST_ARCH=linux-x86_64
+export EPICS_PATH=${HOME}/epics/R${EPICS_VERSION}
+export EPICS_BASE=${HOME}/epics/R${EPICS_VERSION}/base
+export EPICS_EXTENSIONS=${EPICS_PATH}/extensions
+export EPICS_SYNAPPS="EPICS_SYNAPP is empty"
+export RAON_SITEAPPS=${EPICS_PATH}/siteApps
+export RAON_SITELIBS=${EPICS_PATH}/sitelibs
+export PATH=${EPICS_PATH}/base/bin/${EPICS_HOST_ARCH}:${EPICS_PATH}/extensions/bin/${EPICS_HOST_ARCH}:${EPICS_PATH}/siteApps/bin/${EPICS_HOST_ARCH}:${EPICS_PATH}/siteLibs/bin/${EPICS_HOST_ARCH}:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games
+export LD_LIBRARY_PATH=${EPICS_PATH}/base/lib/${EPICS_HOST_ARCH}:${EPICS_PATH}/extensions/lib/${EPICS_HOST_ARCH}:${EPICS_PATH}/siteApps/lib/${EPICS_HOST_ARCH}:${EPICS_PATH}/siteLibs/lib/${EPICS_HOST_ARCH}
+EOF
+
+    cd ${EPICS_PATH}
+    chmod +x setEpicsEnv.sh
+    . setEpicsEnv.sh
+    end_func ${func_name};
+}
+
+function epics_synapp_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+if [ ! -d ${EPICS_PATH}/base ]; then
+	echo "Cannot find the EPICS base directory. Please install the EPICS base first"
+else
+	echo "Start the EPICS synapp installation"
+	cd ${DOWNLOAD_SITE}
+	# EPICS SYNAPP need to msi extension
+	echo "Download the extension..."
+	$WGET_CMD "https://www.aps.anl.gov/epics/download/extensions/extensionsTop_20120904.tar.gz"
+	$WGET_CMD "https://www.aps.anl.gov/epics/download/extensions/msi1-6.tar.gz"
+	$TAR_CMD extensionsTop_20120904.tar.gz -C ${EPICS_PATH}
+	$TAR_CMD msi1-6.tar.gz -C ${EPICS_PATH}/extensions/src
+
+	extn_conf=${EPICS_PATH}/extensions/configure/os/CONFIG_SITE.linux-x86_64.linux-x86_64
+	cd ${EPICS_PATH}/extensions/configure/os
+	mv ${extn_conf} ${extn_conf}_origin
+	touch ${extn_conf}
+echo -e '-include $(TOP)/configure/os/CONFIG_SITE.linux-x86.linux-x86' >> $extn_conf
+echo "X11_LIB=/usr/lib/x86_64-linux-gnu" >>$extn_conf
+echo "X11_INC=/usr/include" >>$extn_conf
+echo "MOTIF_LIB=/usr/lib/x86_64-linux-gnu" >>$extn_conf
+echo "MOTIF_INC=/usr/include" >> $extn_conf
+echo "JAVA_DIR=/usr" >>$extn_conf
+echo "SCIPLOT=YES" >>$extn_conf
+echo "XRTGRAPH_EXTENSIONS ="  >>$extn_conf
+echo "XRTGRAPH =" >>$extn_conf
+
+	cd ${EPICS_PATH}/extensions/src/msi1-6
+	make
+	$SUDO_CMD apt-get -y install re2c
+	$SUDO_CMD yum -y install epel-release
+	$SUDO_CMD yum -y install re2c
+	cd ${DOWNLOAD_SITE}
+	echo "Download the synApp_5_8..."
+	$WGET_CMD "http://www.aps.anl.gov/bcda/synApps/tar/synApps_5_8.tar.gz"
+	mkdir -p ${EPICS_PATH}/epicsLibs
+	$TAR_CMD synApps_5_8.tar.gz -C ${EPICS_PATH}/epicsLibs
+	cd ${EPICS_PATH}
+	. setEpicsEnv.sh
+	synapp_make
+	echo "EPICS synApps installed at ${EPICS_PATH}/epicsLibs"
+fi
+    end_func ${func_name};
+}
+
+function synapp_make(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+    local epics_synapp=${EPICS_PATH}/epicsLibs/synApps_5_8/support
+    cd ${epics_synapp}
+    sed -i  "s|^EPICS_BASE=.*|EPICS_BASE=${EPICS_BASE}|g" $(find -name 'RELEASE')
+    sed -i  "s|^SUPPORT=.*|SUPPORT=${epics_synapp}|g" $(find -name 'RELEASE')
+    disable_areadetector
+    make
+    sed -i~ "s|^export EPICS_SYNAPPS=.*|export EPICS_SYNAPPS=${EPICS_PATH}/epicsLibs/synApps_5_8/support|g" "${EPICS_PATH}/setEpicsEnv.sh"
+    end_func ${func_name};
+}
+
+function disable_areadetector(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+    local epics_synapp=${EPICS_PATH}/epicsLibs/synApps_5_8/support
+    sed -i~ "s|^AREA_DETECTOR=.*|#AREA_DETECTOR=|g" $(find -name 'RELEASE')
+    sed -i  "s|^ADCORE=.*|#ADCORE=|g" $(find -name 'RELEASE')
+    sed -i  "s|^ADBINARIES=.*|#ADBINARIES=|g" $(find -name 'RELEASE')
+    sed -i  "s|^QUADEM=.*|#QUANEM=|g" $(find -name 'RELEASE')
+    sed -i  "s|^DXP=.*|#DXP=.*|g" $(find -name 'RELEASE')
+
+
+    end_func ${func_name};
+}
+
+function epicsv4_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+    cd ${DOWNLOAD_SITE}
+    echo "Download the EPICS_v4 CPP..."
+    $WGET_CMD "http://downloads.sourceforge.net/project/epics-pvdata/${EPICS_V4_VERSION}/EPICS-CPP-${EPICS_V4_VERSION}.tar.gz"
+    mkdir -p ${EPICS_PATH}/EPICS_V4
+    $TAR_CMD EPICS-CPP-${EPICS_V4_VERSION}.tar.gz -C ${EPICS_PATH}/EPICS_V4
+    $WGET_CMD "http://downloads.sourceforge.net/project/epics-pvdata/${EPICS_V4_VERSION}/EPICS-Java-${EPICS_V4_VERSION}.tar.gz"
+    $TAR_CMD EPICS-Java-${EPICS_V4_VERSION}.tar.gz -C ${EPICS_PATH}/EPICS_V4
+    cd ${EPICS_PATH}
+    . setEpicsEnv.sh
+    cd ${EPICS_PATH}/EPICS_V4/EPICS-CPP-${EPICS_V4_VERSION}
+    make
+    echo "EPICS_v4 installed at ${EPICS_PATH}/EPICS-CPP-${EPICS_V4_VERSION}"
+    end_func ${func_name};
+}
+
+
+
+function css_setup(){
+
+    local func_name=${FUNCNAME[*]}; ini_func ${func_name};
+
+    cd ${HOME}
+if [ -d ${HOME}/cs-studio ]; then
+        echo ""
+        echo "cs-studio already exist"
+        echo "Do you want to change with cs-studio version ${SC_STUDIO_VERSION}?"
+        echo "Y / N : "
+        read csanswer
+        if [ "$csanswer" == "Y" ] || [ "$csanswer" == "y" ]; then
+                echo ""
+                echo "Change old cs-studio to cs-studio-${CS_STUDIO_VERSION}"
+                echo "Old cs-studio directory is change with cs-studio_bak_${LOG_DATE}"
+		mv cs-studio cs-studio_bak_${LOG_DATE}
+		echo "cs-studio-${CS_STUDIO_VERSION} downloading..."
+		$WGET_CMD "http://control.risp.re.kr:30000/RaonControl/cs-studio-raon/raw/master/cs-studio-raon-${CS_STUDIO_VERSION}/cs-studio-raon-${CS_STUDIO_VERSION}-linux.gtk.x86_64.tar.gz"
+                $TAR_CMD cs-studio-raon-${CS_STUDIO_VERSION}-linux.gtk.x86_64.tar.gz
+		rm cs-studio-raon-${CS_STUDIO_VERSION}-linux.gtk.x86_64.tar.gz
+                echo "cs-studio installed at ${HOME}/cs-studio"
+        else
+                echo ""
+                echo "Please re-run this script when you want to change cs-studio"
+                echo ""
+        fi
+else
+	 echo "cs-studio-${CS_STUDIO_VERSION} downloading..."
+         $WGET_CMD "http://control.risp.re.kr:30000/RaonControl/cs-studio-raon/raw/master/cs-studio-raon-${CS_STUDIO_VERSION}/cs-studio-raon-${CS_STUDIO_VERSION}-linux.gtk.x86_64.tar.gz"
+         $TAR_CMD cs-studio-raon-${CS_STUDIO_VERSION}-linux.gtk.x86_64.tar.gz
+         rm cs-studio-raon-${CS_STUDIO_VERSION}-linux.gtk.x86_64.tar.gz
+         echo "cs-studio installed at ${HOME}/cs-studio"
+
+fi
+
+    end_func ${func_name};
+}
+
+
+echo ""
+echo "Auto Installation script for RAON Control system"
+echo "Enter the number of you want to install"
+echo "1 : EPICS Base version R${EPICS_VERSION}"
+echo "2 : EPICS synApps"
+echo "3 : EPICS 4 version ${EPICS_V4_VERSION}"
+echo "4 : RAON Control System Studio version ${CS_STUDIO_VERSION}"
+echo "5 : Archiver Appliance(Only Debian)"
+echo "0 : Exit script"
+echo ""
+echo -n "Enter the number : "
+read answer
+case "${answer}" in
+        1)
+                echo "Install the EPICS BASE... "
+		epics_base_setup
+                ;;
+	2)
+		echo "Install the EPICS synApps..."
+		epics_synapp_setup
+		;;
+	3)
+		echo "Install the EPICS 4..."
+		epicsv4_setup
+		;;
+	4)
+		echo "Install the Control System Studio..."
+		jdk8_setup
+		css_setup
+		;;
+        5)
+                echo "Install the Archiver Appliance... "
+		mkdir -p ${HOME}/epics/{downloads,R${EPICS_VERSION}}
+		mkdir -p ${EPICS_PATH}/archiver_appliance
+
+		jdk8_setup
+		tomcat_setup
+		mysql_setup
+		archappl_setup
+		deploy
+		change_template
+		prepare_storage
+		start_script
+		echo "Archiver Appliance installed at ${EPICS_PATH}/archiver_appliance"
+		;;
+	0)
+		echo "Exit the script"
+		exit 1
+		;;
+        *)
+                echo ""
+		echo "You have entered ${answer}"
+		echo "Please select the number in the list..."
+		echo "Exit the script"
+		echo ""
+                exit 1
+                ;;
+esac
+exit 0
+
+
